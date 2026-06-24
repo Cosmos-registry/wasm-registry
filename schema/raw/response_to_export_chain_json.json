@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ExportChainJsonResponse",
+  "type": "object",
+  "required": [
+    "apis",
+    "assets",
+    "bech32_prefix",
+    "chain_id",
+    "chain_name",
+    "network_type",
+    "pretty_name"
+  ],
+  "properties": {
+    "apis": {
+      "$ref": "#/definitions/ChainJsonApis"
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Asset"
+      }
+    },
+    "bech32_prefix": {
+      "type": "string"
+    },
+    "chain_id": {
+      "type": "string"
+    },
+    "chain_name": {
+      "type": "string"
+    },
+    "network_type": {
+      "$ref": "#/definitions/NetworkType"
+    },
+    "pretty_name": {
+      "type": "string"
+    },
+    "website": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ApiEndpointEntry": {
+      "type": "object",
+      "required": [
+        "address",
+        "provider"
+      ],
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Asset": {
+      "type": "object",
+      "required": [
+        "decimals",
+        "denom",
+        "display",
+        "symbol"
+      ],
+      "properties": {
+        "decimals": {
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0.0
+        },
+        "denom": {
+          "type": "string"
+        },
+        "display": {
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ChainJsonApis": {
+      "type": "object",
+      "required": [
+        "grpc",
+        "rest",
+        "rpc",
+        "wss"
+      ],
+      "properties": {
+        "grpc": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiEndpointEntry"
+          }
+        },
+        "rest": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiEndpointEntry"
+          }
+        },
+        "rpc": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiEndpointEntry"
+          }
+        },
+        "wss": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiEndpointEntry"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "NetworkType": {
+      "type": "string",
+      "enum": [
+        "mainnet",
+        "testnet",
+        "devnet"
+      ]
+    }
+  }
+}

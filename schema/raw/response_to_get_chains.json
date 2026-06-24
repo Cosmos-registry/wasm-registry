@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ChainsResponse",
+  "type": "object",
+  "required": [
+    "chains"
+  ],
+  "properties": {
+    "chains": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ChainListItem"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ChainListItem": {
+      "type": "object",
+      "required": [
+        "chain_id",
+        "endpoint_count",
+        "network_type",
+        "pretty_name"
+      ],
+      "properties": {
+        "chain_id": {
+          "type": "string"
+        },
+        "endpoint_count": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "network_type": {
+          "$ref": "#/definitions/NetworkType"
+        },
+        "pretty_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "NetworkType": {
+      "type": "string",
+      "enum": [
+        "mainnet",
+        "testnet",
+        "devnet"
+      ]
+    }
+  }
+}

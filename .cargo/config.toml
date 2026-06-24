@@ -1,0 +1,7 @@
+[alias]
+wasm = "build --release --target wasm32-unknown-unknown"
+schema = "run --example schema"
+unit-test = "test"
+
+[build]
+rustflags = ["-C", "link-arg=-s"]
