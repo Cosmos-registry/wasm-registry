@@ -36,6 +36,12 @@ pub enum ContractError {
     #[error("deposit below minimum")]
     DepositBelowMinimum,
 
+    #[error("invalid funds denom: only uatom is accepted")]
+    InvalidFundsDenom,
+
+    #[error("invalid funds amount for deposit/top-up")]
+    InvalidFundsAmount,
+
     #[error("max endpoints per chain exceeded")]
     MaxEndpointsPerChainExceeded,
 

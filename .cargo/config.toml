@@ -5,3 +5,6 @@ unit-test = "test"
 
 [build]
 rustflags = ["-C", "link-arg=-s"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=-reference-types"]

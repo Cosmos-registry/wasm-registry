@@ -1,4 +1,4 @@
-use cosmwasm_std::{Addr, Empty, Timestamp, Uint128};
+use cosmwasm_std::{coin, coins, Addr, Empty, Timestamp, Uint128};
 use cw_multi_test::{App, Contract, ContractWrapper, Executor};
 
 use cosm_registry::msg::{
@@ -47,9 +47,32 @@ fn instantiate_msg() -> InstantiateMsg {
     }
 }
 
+const NATIVE_DENOM: &str = "uatom";
+
+fn app_with_balances() -> App {
+    App::new(|router, _, storage| {
+        router
+            .bank
+            .init_balance(
+                storage,
+                &Addr::unchecked("admin"),
+                coins(1_000_000, NATIVE_DENOM),
+            )
+            .unwrap();
+        router
+            .bank
+            .init_balance(
+                storage,
+                &Addr::unchecked("user1"),
+                coins(1_000_000, NATIVE_DENOM),
+            )
+            .unwrap();
+    })
+}
+
 #[test]
 fn register_chain_and_export_chain_json() {
-    let mut app = App::default();
+    let mut app = app_with_balances();
     let admin = Addr::unchecked("admin");
 
     let code_id = app.store_code(contract_cosm_registry());
@@ -79,7 +102,7 @@ fn register_chain_and_export_chain_json() {
                 owner: None,
             },
         },
-        &[],
+        &[coin(120, NATIVE_DENOM)],
     )
     .unwrap();
 
@@ -101,7 +124,7 @@ fn register_chain_and_export_chain_json() {
 
 #[test]
 fn rejects_duplicate_endpoint_after_url_normalization() {
-    let mut app = App::default();
+    let mut app = app_with_balances();
     let admin = Addr::unchecked("admin");
 
     let code_id = app.store_code(contract_cosm_registry());
@@ -131,7 +154,7 @@ fn rejects_duplicate_endpoint_after_url_normalization() {
                 owner: None,
             },
         },
-        &[],
+        &[coin(120, NATIVE_DENOM)],
     )
     .unwrap();
 
@@ -148,7 +171,7 @@ fn rejects_duplicate_endpoint_after_url_normalization() {
                     owner: None,
                 },
             },
-            &[],
+            &[coin(120, NATIVE_DENOM)],
         );
 
     assert!(result.is_err());
@@ -169,7 +192,7 @@ fn rejects_duplicate_endpoint_after_url_normalization() {
 
 #[test]
 fn rejects_endpoint_below_min_deposit() {
-    let mut app = App::default();
+    let mut app = app_with_balances();
     let admin = Addr::unchecked("admin");
 
     let code_id = app.store_code(contract_cosm_registry());
@@ -200,7 +223,7 @@ fn rejects_endpoint_below_min_deposit() {
                     owner: None,
                 },
             },
-            &[],
+            &[coin(99, NATIVE_DENOM)],
         );
 
     assert!(result.is_err());
@@ -221,7 +244,7 @@ fn rejects_endpoint_below_min_deposit() {
 
 #[test]
 fn non_admin_cannot_change_params() {
-    let mut app = App::default();
+    let mut app = app_with_balances();
     let admin = Addr::unchecked("admin");
     let user = Addr::unchecked("user1");
 
@@ -256,7 +279,7 @@ fn non_admin_cannot_change_params() {
 
 #[test]
 fn lazy_expiration_hides_endpoint_and_top_up_reactivates() {
-    let mut app = App::default();
+    let mut app = app_with_balances();
     let admin = Addr::unchecked("admin");
 
     let code_id = app.store_code(contract_cosm_registry());
@@ -286,7 +309,7 @@ fn lazy_expiration_hides_endpoint_and_top_up_reactivates() {
                 owner: None,
             },
         },
-        &[],
+        &[coin(100, NATIVE_DENOM)],
     )
     .unwrap();
 
@@ -315,7 +338,7 @@ fn lazy_expiration_hides_endpoint_and_top_up_reactivates() {
             endpoint_id: 1,
             amount: Uint128::new(150),
         },
-        &[],
+        &[coin(150, NATIVE_DENOM)],
     )
     .unwrap();
 

@@ -9,7 +9,7 @@ use crate::error::ContractError;
 use crate::msg::{
     ApiEndpointEntry, ChainJsonApis, ChainListItem, ChainMeta, ChainMetaUpdate, ChainResponse,
     ChainsResponse, EndpointInput, EndpointKind, EndpointView, EndpointsResponse, ExecuteMsg,
-    ExportChainJsonResponse, InstantiateMsg, OwnerResponse, ParamsUpdate, QueryMsg,
+    ExportChainJsonResponse, InstantiateMsg, MigrateMsg, OwnerResponse, ParamsUpdate, QueryMsg,
     RegistryParams, RegistryParamsResponse,
 };
 use crate::state::{
@@ -19,6 +19,7 @@ use crate::state::{
 
 const CONTRACT_NAME: &str = "crates.io:cosm_registry";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const NATIVE_DENOM: &str = "uatom";
 const DEFAULT_MIN_DEPOSIT: u128 = 1_000;
 const DEFAULT_RENT_PER_EPOCH: u128 = 10;
 const DEFAULT_EPOCH_SECONDS: u64 = 3600;
@@ -107,6 +108,16 @@ pub fn execute(
     }
 }
 
+pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    // No state transformation needed in this migration; historical deposits are preserved as-is.
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "migrate")
+        .add_attribute("preserve_historical_deposits", "true")
+        .add_attribute("block_time", env.block.time.seconds().to_string()))
+}
+
 fn execute_register_chain(
     deps: DepsMut,
     env: Env,
@@ -177,6 +188,8 @@ fn execute_register_endpoint(
 ) -> Result<Response, ContractError> {
     validate_chain_id(&chain_id)?;
 
+    ensure_exact_native_deposit(&info, endpoint.deposit)?;
+
     if CHAINS.may_load(deps.storage, chain_id.clone())?.is_none() {
         return Err(ContractError::ChainNotFound { chain_id });
     }
@@ -233,6 +246,7 @@ fn execute_register_endpoint(
     Ok(Response::new()
         .add_attribute("action", "register_endpoint")
         .add_attribute("chain_id", chain_id)
+        .add_attribute("denom", NATIVE_DENOM)
         .add_attribute("endpoint_id", endpoint_id.to_string()))
 }
 
@@ -249,6 +263,8 @@ fn execute_top_up_endpoint(
             field: "amount".to_string(),
         });
     }
+
+    ensure_exact_native_deposit(&info, amount)?;
 
     let config = CONFIG.load(deps.storage)?;
     let mut endpoint = charge_endpoint(deps.storage, &chain_id, endpoint_id, env.block.time.seconds())?;
@@ -267,6 +283,7 @@ fn execute_top_up_endpoint(
         .add_attribute("action", "top_up_endpoint")
         .add_attribute("chain_id", chain_id)
         .add_attribute("endpoint_id", endpoint_id.to_string())
+        .add_attribute("denom", NATIVE_DENOM)
         .add_attribute("amount", amount.to_string()))
 }
 
@@ -794,4 +811,21 @@ fn simulate_endpoint_state(
 
 fn to_std_error(err: ContractError) -> StdError {
     StdError::generic_err(err.to_string())
+}
+
+fn ensure_exact_native_deposit(info: &MessageInfo, expected: Uint128) -> Result<(), ContractError> {
+    let mut total = Uint128::zero();
+
+    for coin in &info.funds {
+        if coin.denom != NATIVE_DENOM {
+            return Err(ContractError::InvalidFundsDenom);
+        }
+        total = total.checked_add(coin.amount).map_err(|_| ContractError::Overflow)?;
+    }
+
+    if total != expected {
+        return Err(ContractError::InvalidFundsAmount);
+    }
+
+    Ok(())
 }
