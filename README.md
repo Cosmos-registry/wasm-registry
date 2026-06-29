@@ -83,3 +83,35 @@ Ce socle sera adapte une fois votre expression du besoin fournie.
 - Rejet d'un endpoint sous depot minimal.
 - Rejet des updates de params par non-admin.
 - Expiration lazy puis reactivation via top-up.
+
+# déployement et Mise a Jour
+
+```
+~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm --from test-dev --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
+
+~/go/bin/gaiad query wasm list-code --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443  --output json --reverse | jq -r '.code_infos[-1].code_id'
+
+export CODE_ID=<code_id>
+
+INIT='{"owner":"'"cosmos1abcd"'","treasury":"'"cosmos1abcd"'"}'
+
+~/go/bin/gaiad tx wasm instantiate 520 "$INIT" --label "chain-registry" --admin cosmos1abcd --from test-dev --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
+
+```
+
+# Update et migration
+```
+export ACCOUNT=test-dev
+export ADDRESS=$(~/go/bin/gaiad keys show ${ACCOUNT} --address)
+~/go/bin/gaiad query wasm list-contracts-by-creator ${ADDRESS} --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 -o json
+
+
+~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm --from ${ACCOUNT} --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom -y --broadcast-mode sync -o json
+
+~/go/bin/gaiad query tx 36A49A9A6E896866C37212EE02A15C70CF9C27652ADCA3EC55C4A15A2172A7C9 --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 -o json | jq -r '[.. | objects | select(.type? == "store_code") | .attributes[]? | select(.key == "code_id") | .value][0]'
+
+export NEW_CODE_ID=<code_id>
+
+~/go/bin/gaiad tx wasm migrate cosmos1jeurekn4zrz4k5welwlvcngte337cnckarjp7csted7ay3xn668qyer6sn ${NEW_CODE_ID} '{}' --from ${ACCOUNT} --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom -y --broadcast-mode sync -o json
+
+```

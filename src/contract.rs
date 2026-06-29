@@ -1,6 +1,6 @@
 use cosmwasm_std::{
     to_json_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError, StdResult,
-    Storage, Uint128,
+    Storage, Uint128, BankMsg, Coin
 };
 use cw2::set_contract_version;
 use cw_storage_plus::Bound;
@@ -299,13 +299,8 @@ fn execute_remove_endpoint(
     if info.sender != endpoint.owner && info.sender != config.owner {
         return Err(ContractError::Unauthorized);
     }
-
-    let mut treasury = TREASURY_ACCUMULATED.load(deps.storage)?;
-    treasury = treasury
-        .checked_add(endpoint.deposit)
-        .map_err(|_| ContractError::Overflow)?;
-    TREASURY_ACCUMULATED.save(deps.storage, &treasury)?;
-
+    let refund_amount = endpoint.deposit;
+    
     ENDPOINTS.remove(deps.storage, (chain_id.clone(), endpoint_id));
     ENDPOINT_URL_INDEX.remove(
         deps.storage,
@@ -315,10 +310,24 @@ fn execute_remove_endpoint(
         ),
     );
 
-    Ok(Response::new()
+    let mut res = Response::new()
         .add_attribute("action", "remove_endpoint")
         .add_attribute("chain_id", chain_id)
-        .add_attribute("endpoint_id", endpoint_id.to_string()))
+        .add_attribute("endpoint_id", endpoint_id.to_string());
+
+    if !refund_amount.is_zero() {
+        let refund_msg = BankMsg::Send {
+            to_address: endpoint.owner.to_string(),
+            amount: vec![Coin {
+                denom: NATIVE_DENOM.to_string(),
+                amount: refund_amount,
+            }],
+        };
+        res = res.add_message(refund_msg);
+        res = res.add_attribute("refund_amount", refund_amount.to_string());
+    }
+
+    Ok(res)
 }
 
 fn execute_set_params(
