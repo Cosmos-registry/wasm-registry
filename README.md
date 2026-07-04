@@ -1,117 +1,147 @@
-# Cosm Registry - CosmWasm Contract Workspace
+# Wasm Registry - CosmWasm Smart Contract Workspace
 
-Workspace Rust/CosmWasm avec devcontainer pour développer un smart contract dans l'ecosysteme Cosmos.
+This repository contains the Wasm Registry smart contract, built with Rust and CosmWasm.
+The contract provides an on-chain registry for Cosmos chain metadata and public infrastructure endpoints (RPC, REST, gRPC, WSS), with an economic model to manage endpoint quality over time.
 
-## Prerequis
+## Project Purpose
 
-- VS Code avec l'extension Dev Containers
-- Docker actif
+The goal of Wasm Registry is to provide a canonical, queryable source of chain and endpoint information for Cosmos ecosystem tools.
 
-## Ouvrir dans le devcontainer
+It supports:
 
-1. Ouvrir ce dossier dans VS Code.
-2. Lancer la commande: Reopen in Container.
-3. Attendre la fin du postCreateCommand.
+- Registering and updating chain metadata.
+- Registering infrastructure endpoints with minimum collateral.
+- Managing endpoint lifecycle through lazy rent accounting.
+- Exporting a chain-registry-like API projection.
 
-## Commandes utiles
+## Prerequisites
 
-- Verifier le code: `cargo fmt --all --check`
-- Linter: `cargo clippy --all-targets -- -D warnings`
-- Tests: `cargo test`
-- Build wasm: `cargo wasm`
-- Generer schemas JSON: `cargo schema`
+- Docker running locally.
 
-## Structure
+## Useful Commands
 
-- `src/`: code du contrat
-- `examples/schema.rs`: generation des schemas
-- `tests/`: tests integration cw-multi-test
-- `.devcontainer/`: environnement reproductible
+- Format check: `cargo fmt --all --check`
+- Lint: `cargo clippy --all-targets -- -D warnings`
+- Unit and integration tests: `cargo test`
+- Build optimized wasm: `cargo wasm`
+- Generate JSON schemas: `cargo schema`
 
-## Contrat de base
+## Repository Structure
 
-Le scaffold fournit:
+- `src/`: contract implementation (entrypoints, messages, state, errors).
+- `examples/schema.rs`: schema generation binary.
+- `schema/`: generated JSON schemas.
+- `tests/`: integration tests with cw-multi-test.
+- `scripts/`: helper scripts for build, deploy, and schema generation.
+- `.devcontainer/`: reproducible development environment.
 
-- une instantiation avec `owner` optionnel
-- une execution `SetValue { key, value }` reservee a l'owner
-- des queries `GetValue` et `GetOwner`
+## Implemented V1 Contract Scope
 
-Ce socle sera adapte une fois votre expression du besoin fournie.
+### Execute Messages
 
-## Fonctions V1 implementees
+- `RegisterChain`: creates a chain with normalized metadata and assets.
+- `UpdateChainMeta`: updates metadata for an existing chain (chain owner or admin).
+- `RegisterEndpoint`: adds an RPC/REST/gRPC/WSS endpoint with required minimum deposit.
+- `TopUpEndpoint`: adds funds to an endpoint deposit (endpoint owner or admin).
+- `RemoveEndpoint`: removes an endpoint and refunds remaining deposit (endpoint owner or admin).
+- `SetParams`: updates economic and protocol parameters (admin only).
+- `SetEndpointFlags`: updates `verified` and `preferred` flags (admin only).
 
-### Execute messages
+### Query Messages
 
-- `RegisterChain`: cree une chaine avec metadata normalisee et assets.
-- `UpdateChainMeta`: met a jour la metadata d'une chaine existante (owner de la chaine ou admin).
-- `RegisterEndpoint`: ajoute un endpoint RPC/REST/gRPC/WSS avec depot minimal obligatoire.
-- `TopUpEndpoint`: recharge le depot d'un endpoint (owner endpoint ou admin).
-- `RemoveEndpoint`: retire un endpoint (owner endpoint ou admin).
-- `SetParams`: met a jour les parametres economiques (admin uniquement).
-- `SetEndpointFlags`: positionne `verified/preferred` (admin uniquement).
+- `GetChain`: returns chain metadata and active endpoints.
+- `GetChains`: paginated list of chains.
+- `GetEndpoints`: endpoint list filtered by type and active state.
+- `ExportChainJson`: chain-registry-compatible projection for `apis.rpc/rest/grpc/wss`.
+- `GetOwner`: returns contract owner and treasury.
+- `GetParams`: returns active registry parameters.
 
-### Query messages
+## Security And Validation Model
 
-- `GetChain`: retourne metadata + endpoints actifs pour une chaine.
-- `GetChains`: liste paginee des chaines.
-- `GetEndpoints`: liste des endpoints avec filtre de type et inclusion optionnelle des inactifs.
-- `ExportChainJson`: projection compatible chain-registry pour `apis.rpc/rest/grpc/wss`.
-- `GetOwner`: retourne owner et treasury.
-- `GetParams`: retourne les parametres economiques actifs.
+- Strict authorization controls:
+  - admin only for `SetParams` and `SetEndpointFlags`.
+  - chain owner or admin for `UpdateChainMeta`.
+  - endpoint owner or admin for `TopUpEndpoint` and `RemoveEndpoint`.
+- Input validation:
+  - `chain_id` constrained to lowercase alphanumeric and hyphen rules.
+  - required text fields validated for emptiness and max length.
+  - endpoint URL scheme validated by endpoint kind.
+  - URL normalization and uniqueness index to block duplicate variants.
+- Economic protections:
+  - minimum deposit required for endpoint registration.
+  - lazy rent charging per epoch.
+  - endpoint automatically becomes inactive when deposit is exhausted.
+  - rent accumulation routed to logical treasury accounting.
 
-## Regles de securite appliquees
+## Test Coverage (Integration)
 
-- Controle d'acces strict:
-	- admin requis pour `SetParams` et `SetEndpointFlags`.
-	- owner chaine ou admin pour `UpdateChainMeta`.
-	- owner endpoint ou admin pour `TopUpEndpoint` et `RemoveEndpoint`.
-- Validation d'entrees:
-	- `chain_id` en `[a-z0-9-]` avec bornes de longueur.
-	- validation des champs texte (non vide, taille max).
-	- validation stricte des schemes URL selon type d'endpoint.
-	- normalisation URL + index d'unicite pour bloquer les doublons triviaux.
-- Modele economique:
-	- depot minimal pour enregistrer un endpoint.
-	- rent deduite en lazy accounting par epochs.
-	- endpoint inactif quand depot epuise.
-	- accumulation des frais vers la tresorerie logique.
+Current integration tests cover:
 
-## Tests couverts (integration)
+- Chain registration and `chain.json` export compatibility.
+- Duplicate endpoint rejection after URL normalization.
+- Rejection when deposit is below minimum.
+- Admin-only parameter update enforcement.
+- Lazy expiry and endpoint reactivation after top-up.
 
-- Enregistrement d'une chaine et export `chain.json` compatible.
-- Rejet des endpoints dupliques apres normalisation URL.
-- Rejet d'un endpoint sous depot minimal.
-- Rejet des updates de params par non-admin.
-- Expiration lazy puis reactivation via top-up.
+## Build Artifacts
 
-# déployement et Mise a Jour
+After a successful wasm build, compiled artifacts are located in `artifacts/`.
 
-```
-~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm --from test-dev --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
+## Deployment Example
 
-~/go/bin/gaiad query wasm list-code --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443  --output json --reverse | jq -r '.code_infos[-1].code_id'
+```bash
+~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm \
+  --from test-dev \
+  --chain-id provider \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
+
+~/go/bin/gaiad query wasm list-code \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  --output json --reverse | jq -r '.code_infos[-1].code_id'
 
 export CODE_ID=<code_id>
 
-INIT='{"owner":"'"cosmos1abcd"'","treasury":"'"cosmos1abcd"'"}'
+INIT='{"owner":"cosmos1abcd","treasury":"cosmos1abcd"}'
 
-~/go/bin/gaiad tx wasm instantiate 520 "$INIT" --label "chain-registry" --admin cosmos1abcd --from test-dev --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
-
+~/go/bin/gaiad tx wasm instantiate ${CODE_ID} "$INIT" \
+  --label "chain-registry" \
+  --admin cosmos1abcd \
+  --from test-dev \
+  --chain-id provider \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom
 ```
 
-# Update et migration
-```
+## Upgrade And Migration Example
+
+```bash
 export ACCOUNT=test-dev
 export ADDRESS=$(~/go/bin/gaiad keys show ${ACCOUNT} --address)
-~/go/bin/gaiad query wasm list-contracts-by-creator ${ADDRESS} --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 -o json
 
+~/go/bin/gaiad query wasm list-contracts-by-creator ${ADDRESS} \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  -o json
 
-~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm --from ${ACCOUNT} --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom -y --broadcast-mode sync -o json
-
-~/go/bin/gaiad query tx 36A49A9A6E896866C37212EE02A15C70CF9C27652ADCA3EC55C4A15A2172A7C9 --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 -o json | jq -r '[.. | objects | select(.type? == "store_code") | .attributes[]? | select(.key == "code_id") | .value][0]'
+~/go/bin/gaiad tx wasm store artifacts/cosm_registry.wasm \
+  --from ${ACCOUNT} \
+  --chain-id provider \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom \
+  -y --broadcast-mode sync -o json
 
 export NEW_CODE_ID=<code_id>
+export CONTRACT_ADDR=<contract_address>
 
-~/go/bin/gaiad tx wasm migrate cosmos1jeurekn4zrz4k5welwlvcngte337cnckarjp7csted7ay3xn668qyer6sn ${NEW_CODE_ID} '{}' --from ${ACCOUNT} --chain-id provider --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom -y --broadcast-mode sync -o json
-
+~/go/bin/gaiad tx wasm migrate ${CONTRACT_ADDR} ${NEW_CODE_ID} '{}' \
+  --from ${ACCOUNT} \
+  --chain-id provider \
+  --node https://rpc.provider-sentry-01.hub-testnet.polypore.xyz:443 \
+  --gas auto --gas-adjustment 1.4 --gas-prices 0.005uatom \
+  -y --broadcast-mode sync -o json
 ```
+
+## Notes
+
+- Replace placeholder addresses and IDs with your environment values.
+- Always review generated schemas and run tests before deployment.
