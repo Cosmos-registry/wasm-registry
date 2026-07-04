@@ -267,11 +267,11 @@ fn execute_top_up_endpoint(
     ensure_exact_native_deposit(&info, amount)?;
 
     let config = CONFIG.load(deps.storage)?;
-    let mut endpoint = charge_endpoint(deps.storage, &chain_id, endpoint_id, env.block.time.seconds())?;
+    let mut endpoint = get_endpoint(deps.storage, &chain_id, endpoint_id)?;
     if info.sender != endpoint.owner && info.sender != config.owner {
         return Err(ContractError::Unauthorized);
     }
-
+    charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
     endpoint.deposit = endpoint
         .deposit
         .checked_add(amount)
@@ -295,10 +295,11 @@ fn execute_remove_endpoint(
     endpoint_id: u64,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-    let endpoint = charge_endpoint(deps.storage, &chain_id, endpoint_id, env.block.time.seconds())?;
+    let mut endpoint = get_endpoint(deps.storage, &chain_id, endpoint_id)?;
     if info.sender != endpoint.owner && info.sender != config.owner {
         return Err(ContractError::Unauthorized);
     }
+    charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
     let refund_amount = endpoint.deposit;
     
     ENDPOINTS.remove(deps.storage, (chain_id.clone(), endpoint_id));
@@ -740,15 +741,22 @@ fn endpoint_index_key(kind: &EndpointKind, normalized_url: &str) -> String {
     format!("{}|{}", kind.as_str(), normalized_url.to_ascii_lowercase())
 }
 
-fn charge_endpoint(
+fn get_endpoint(
     storage: &mut dyn Storage,
     chain_id: &str,
-    endpoint_id: u64,
-    now: u64,
+    endpoint_id: u64
 ) -> Result<EndpointRecord, ContractError> {
-    let mut endpoint = ENDPOINTS
+    let endpoint = ENDPOINTS
         .may_load(storage, (chain_id.to_string(), endpoint_id))?
         .ok_or(ContractError::EndpointNotFound)?;
+    Ok(endpoint)
+}
+
+fn charge_endpoint(
+    storage: &mut dyn Storage,
+    endpoint: &mut EndpointRecord,
+    now: u64,
+) -> Result<EndpointRecord, ContractError> {
     let params = PARAMS.load(storage)?;
 
     if endpoint.active {
@@ -779,8 +787,8 @@ fn charge_endpoint(
         }
     }
 
-    ENDPOINTS.save(storage, (chain_id.to_string(), endpoint_id), &endpoint)?;
-    Ok(endpoint)
+    ENDPOINTS.save(storage, (endpoint.chain_id.to_string(), endpoint.endpoint_id), &endpoint)?;
+    Ok(endpoint.clone())
 }
 
 fn simulate_endpoint_state(
