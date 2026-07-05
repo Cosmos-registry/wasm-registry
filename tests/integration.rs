@@ -1,4 +1,5 @@
 use cosmwasm_std::{coin, coins, Addr, Empty, Timestamp, Uint128};
+use cosmwasm_std::testing::MockApi;
 use cw_multi_test::{App, Contract, ContractWrapper, Executor};
 
 use cosm_registry::msg::{
@@ -34,10 +35,10 @@ fn sample_chain(chain_id: &str) -> ChainMeta {
     }
 }
 
-fn instantiate_msg() -> InstantiateMsg {
+fn instantiate_msg(owner: &Addr, treasury: &Addr) -> InstantiateMsg {
     InstantiateMsg {
-        owner: Some("admin".to_string()),
-        treasury: Some("treasury".to_string()),
+        owner: Some(owner.to_string()),
+        treasury: Some(treasury.to_string()),
         params: Some(RegistryParams {
             min_endpoint_deposit: Uint128::new(100),
             rent_per_epoch: Uint128::new(10),
@@ -49,35 +50,43 @@ fn instantiate_msg() -> InstantiateMsg {
 
 const NATIVE_DENOM: &str = "uatom";
 
-fn app_with_balances() -> App {
+fn test_addrs() -> (Addr, Addr, Addr) {
+    let api = MockApi::default();
+    (
+        api.addr_make("admin"),
+        api.addr_make("user1"),
+        api.addr_make("treasury"),
+    )
+}
+
+fn app_with_balances(admin: &Addr, user: &Addr) -> App {
     App::new(|router, _, storage| {
         router
             .bank
-            .init_balance(
-                storage,
-                &Addr::unchecked("admin"),
-                coins(1_000_000, NATIVE_DENOM),
-            )
+            .init_balance(storage, admin, coins(1_000_000, NATIVE_DENOM))
             .unwrap();
         router
             .bank
-            .init_balance(
-                storage,
-                &Addr::unchecked("user1"),
-                coins(1_000_000, NATIVE_DENOM),
-            )
+            .init_balance(storage, user, coins(1_000_000, NATIVE_DENOM))
             .unwrap();
     })
 }
 
 #[test]
 fn register_chain_and_export_chain_json() {
-    let mut app = app_with_balances();
-    let admin = Addr::unchecked("admin");
+    let (admin, user, treasury) = test_addrs();
+    let mut app = app_with_balances(&admin, &user);
 
     let code_id = app.store_code(contract_cosm_registry());
     let contract_addr = app
-        .instantiate_contract(code_id, admin.clone(), &instantiate_msg(), &[], "registry", None)
+        .instantiate_contract(
+            code_id,
+            admin.clone(),
+            &instantiate_msg(&admin, &treasury),
+            &[],
+            "registry",
+            None,
+        )
         .unwrap();
 
     app.execute_contract(
@@ -124,12 +133,19 @@ fn register_chain_and_export_chain_json() {
 
 #[test]
 fn rejects_duplicate_endpoint_after_url_normalization() {
-    let mut app = app_with_balances();
-    let admin = Addr::unchecked("admin");
+    let (admin, user, treasury) = test_addrs();
+    let mut app = app_with_balances(&admin, &user);
 
     let code_id = app.store_code(contract_cosm_registry());
     let contract_addr = app
-        .instantiate_contract(code_id, admin.clone(), &instantiate_msg(), &[], "registry", None)
+        .instantiate_contract(
+            code_id,
+            admin.clone(),
+            &instantiate_msg(&admin, &treasury),
+            &[],
+            "registry",
+            None,
+        )
         .unwrap();
 
     app.execute_contract(
@@ -192,12 +208,19 @@ fn rejects_duplicate_endpoint_after_url_normalization() {
 
 #[test]
 fn rejects_endpoint_below_min_deposit() {
-    let mut app = app_with_balances();
-    let admin = Addr::unchecked("admin");
+    let (admin, user, treasury) = test_addrs();
+    let mut app = app_with_balances(&admin, &user);
 
     let code_id = app.store_code(contract_cosm_registry());
     let contract_addr = app
-        .instantiate_contract(code_id, admin.clone(), &instantiate_msg(), &[], "registry", None)
+        .instantiate_contract(
+            code_id,
+            admin.clone(),
+            &instantiate_msg(&admin, &treasury),
+            &[],
+            "registry",
+            None,
+        )
         .unwrap();
 
     app.execute_contract(
@@ -244,13 +267,19 @@ fn rejects_endpoint_below_min_deposit() {
 
 #[test]
 fn non_admin_cannot_change_params() {
-    let mut app = app_with_balances();
-    let admin = Addr::unchecked("admin");
-    let user = Addr::unchecked("user1");
+    let (admin, user, treasury) = test_addrs();
+    let mut app = app_with_balances(&admin, &user);
 
     let code_id = app.store_code(contract_cosm_registry());
     let contract_addr = app
-        .instantiate_contract(code_id, admin, &instantiate_msg(), &[], "registry", None)
+        .instantiate_contract(
+            code_id,
+            admin,
+            &instantiate_msg(&test_addrs().0, &treasury),
+            &[],
+            "registry",
+            None,
+        )
         .unwrap();
 
     let result = app
@@ -279,12 +308,19 @@ fn non_admin_cannot_change_params() {
 
 #[test]
 fn lazy_expiration_hides_endpoint_and_top_up_reactivates() {
-    let mut app = app_with_balances();
-    let admin = Addr::unchecked("admin");
+    let (admin, user, treasury) = test_addrs();
+    let mut app = app_with_balances(&admin, &user);
 
     let code_id = app.store_code(contract_cosm_registry());
     let contract_addr = app
-        .instantiate_contract(code_id, admin.clone(), &instantiate_msg(), &[], "registry", None)
+        .instantiate_contract(
+            code_id,
+            admin.clone(),
+            &instantiate_msg(&admin, &treasury),
+            &[],
+            "registry",
+            None,
+        )
         .unwrap();
 
     app.execute_contract(

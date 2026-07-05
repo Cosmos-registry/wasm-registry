@@ -1,10 +1,10 @@
 [package]
 name = "cosm_registry"
 version = "0.1.0"
-authors = ["Cosm Registry Team"]
+authors = ["Cosmos registry Team"]
 edition = "2021"
 description = "CosmWasm contract scaffold for Cosmos ecosystem"
-license = "Apache-2.0"
+license = "MIT"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -14,12 +14,12 @@ default = []
 library = []
 
 [dependencies]
-cosmwasm-schema = "1.5.5"
-cosmwasm-std = "1.5.5"
-cw-storage-plus = "1.2.0"
-cw2 = "1.1.2"
-serde = { version = "1.0.215", default-features = false, features = ["derive"] }
-thiserror = "1.0.69"
+cosmwasm-schema = "2.3.3"
+cosmwasm-std = "2.2.9"
+cw-storage-plus = "2.0.0"
+cw2 = "2.0.0"
+serde = { version = "1.0.228", default-features = false, features = ["derive"] }
+thiserror = "2.0.18"
 
 [dev-dependencies]
-cw-multi-test = "1.2.0"
+cw-multi-test = "2.5.1"

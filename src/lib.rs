@@ -40,7 +40,7 @@ pub fn migrate(deps: DepsMut, env: Env, msg: MigrateMsg) -> Result<Response, Con
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use cosmwasm_std::testing::{MockApi, mock_dependencies, mock_env, message_info};
 
     #[test]
     fn instantiate_sets_default_owner() {
@@ -50,7 +50,8 @@ mod tests {
             treasury: None,
             params: None,
         };
-        let info = mock_info("owner", &[]);
+        let api = MockApi::default();
+        let info = message_info(&api.addr_make("owner"), &[]);
 
         let response = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
         assert_eq!(response.attributes[0].value, "instantiate");
@@ -64,7 +65,8 @@ mod tests {
             treasury: None,
             params: None,
         };
-        let info = mock_info("owner", &[]);
+        let api = MockApi::default();
+        let info = message_info(&api.addr_make("owner"), &[]);
 
         instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
