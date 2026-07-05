@@ -45,13 +45,14 @@ It supports:
 - `TopUpEndpoint`: adds funds to an endpoint deposit (endpoint owner or admin).
 - `RemoveEndpoint`: removes an endpoint and refunds remaining deposit (endpoint owner or admin).
 - `SetParams`: updates economic and protocol parameters (admin only).
-- `SetEndpointFlags`: updates `verified` and `preferred` flags (admin only).
+- `SubmitEndpointStatuses`: allows trusted oracles to publish batched endpoint health observations.
 
 ### Query Messages
 
 - `GetChain`: returns chain metadata and active endpoints.
 - `GetChains`: paginated list of chains.
 - `GetEndpoints`: endpoint list filtered by type and active state.
+- `GetEndpoints`: endpoint list filtered by type, active state, verification state, and last success timestamps.
 - `ExportChainJson`: chain-registry-compatible projection for `apis.rpc/rest/grpc/wss`.
 - `GetOwner`: returns contract owner and treasury.
 - `GetParams`: returns active registry parameters.
@@ -59,9 +60,10 @@ It supports:
 ## Security And Validation Model
 
 - Strict authorization controls:
-  - admin only for `SetParams` and `SetEndpointFlags`.
+  - admin only for `SetParams`.
   - chain owner or admin for `UpdateChainMeta`.
   - endpoint owner or admin for `TopUpEndpoint` and `RemoveEndpoint`.
+  - trusted oracle whitelist only for `SubmitEndpointStatuses`.
 - Input validation:
   - `chain_id` constrained to lowercase alphanumeric and hyphen rules.
   - required text fields validated for emptiness and max length.
@@ -73,6 +75,16 @@ It supports:
   - endpoint automatically becomes inactive when deposit is exhausted.
   - rent accumulation routed to logical treasury accounting.
 
+## Oracle Verification V1
+
+- Verification states are explicit: `Unverified`, `VerifiedOnline`, `VerifiedOffline`.
+- New endpoints start in `Unverified`.
+- Oracle submissions are atomic and validated (batch size, duplicate endpoint IDs, chain ownership, latency rules).
+- Online observations update success metadata and `last_success_at`.
+- Offline observations update failure metadata and preserve `last_success_at`.
+- Auto-unverify policy applies when failure streak and stale-success thresholds are both exceeded.
+- `ExportChainJson` includes only `VerifiedOnline` endpoints.
+
 ## Test Coverage (Integration)
 
 Current integration tests cover:
@@ -82,6 +94,10 @@ Current integration tests cover:
 - Rejection when deposit is below minimum.
 - Admin-only parameter update enforcement.
 - Lazy expiry and endpoint reactivation after top-up.
+- Oracle batch validation (duplicate IDs, invalid online latency).
+- Oracle verification metadata transitions and auto-unverify behavior.
+- Export policy enforcement (`VerifiedOnline` only).
+- Query filtering by verification and last successful check timestamp.
 
 ## Build Artifacts
 

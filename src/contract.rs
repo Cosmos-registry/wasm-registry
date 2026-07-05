@@ -1,20 +1,22 @@
 use cosmwasm_std::{
-    to_json_binary, Addr, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdError, StdResult,
-    Storage, Uint128, BankMsg, Coin
+    to_json_binary, Addr, Api, BankMsg, Binary, Coin, Deps, DepsMut, Env, MessageInfo, Response,
+    StdError, StdResult, Storage, Uint128,
 };
 use cw2::set_contract_version;
 use cw_storage_plus::Bound;
+use std::collections::HashSet;
 
 use crate::error::ContractError;
 use crate::msg::{
     ApiEndpointEntry, ChainJsonApis, ChainListItem, ChainMeta, ChainMetaUpdate, ChainResponse,
-    ChainsResponse, EndpointInput, EndpointKind, EndpointView, EndpointsResponse, ExecuteMsg,
-    ExportChainJsonResponse, InstantiateMsg, MigrateMsg, OwnerResponse, ParamsUpdate, QueryMsg,
-    RegistryParams, RegistryParamsResponse,
+    ChainsResponse, EndpointInput, EndpointKind, EndpointObservationInput, EndpointStatus,
+    EndpointView, EndpointsResponse, ExecuteMsg, ExportChainJsonResponse, InstantiateMsg,
+    MigrateMsg, OwnerResponse, ParamsUpdate, QueryMsg, RegistryParams, RegistryParamsResponse,
+    VerificationState,
 };
 use crate::state::{
-    ChainRecord, Config, EndpointRecord, CHAINS, CONFIG, ENDPOINTS, ENDPOINT_URL_INDEX,
-    NEXT_ENDPOINT_ID, PARAMS, TREASURY_ACCUMULATED,
+    ChainRecord, Config, EndpointRecord, EndpointVerification, CHAINS, CONFIG, ENDPOINTS,
+    ENDPOINT_URL_INDEX, NEXT_ENDPOINT_ID, PARAMS, TREASURY_ACCUMULATED,
 };
 
 const CONTRACT_NAME: &str = "crates.io:cosm_registry";
@@ -24,6 +26,9 @@ const DEFAULT_MIN_DEPOSIT: u128 = 1_000;
 const DEFAULT_RENT_PER_EPOCH: u128 = 10;
 const DEFAULT_EPOCH_SECONDS: u64 = 3600;
 const DEFAULT_MAX_ENDPOINTS_PER_CHAIN: u32 = 64;
+const DEFAULT_ORACLE_MAX_BATCH_SIZE: u32 = 100;
+const DEFAULT_AUTO_UNVERIFY_FAILURE_STREAK: u32 = 5;
+const DEFAULT_AUTO_UNVERIFY_LAST_SUCCESS_OLDER_THAN_SECS: u64 = 432_000;
 const MAX_CHAIN_ID_LEN: usize = 64;
 const MAX_TEXT_LEN: usize = 128;
 const MAX_URL_LEN: usize = 200;
@@ -54,8 +59,13 @@ pub fn instantiate(
         rent_per_epoch: Uint128::new(DEFAULT_RENT_PER_EPOCH),
         epoch_seconds: DEFAULT_EPOCH_SECONDS,
         max_endpoints_per_chain: DEFAULT_MAX_ENDPOINTS_PER_CHAIN,
+        trusted_oracles: vec![],
+        oracle_max_batch_size: DEFAULT_ORACLE_MAX_BATCH_SIZE,
+        auto_unverify_failure_streak: DEFAULT_AUTO_UNVERIFY_FAILURE_STREAK,
+        auto_unverify_last_success_older_than_secs:
+            DEFAULT_AUTO_UNVERIFY_LAST_SUCCESS_OLDER_THAN_SECS,
     });
-    validate_params(&params)?;
+    let params = validated_params(deps.api, params)?;
 
     CONFIG.save(
         deps.storage,
@@ -99,23 +109,64 @@ pub fn execute(
             endpoint_id,
         } => execute_remove_endpoint(deps, env, info, chain_id, endpoint_id),
         ExecuteMsg::SetParams { params } => execute_set_params(deps, info, params),
-        ExecuteMsg::SetEndpointFlags {
+        ExecuteMsg::SubmitEndpointStatuses {
             chain_id,
-            endpoint_id,
-            verified,
-            preferred,
-        } => execute_set_endpoint_flags(deps, info, chain_id, endpoint_id, verified, preferred),
+            observations,
+        } => execute_submit_endpoint_statuses(deps, env, info, chain_id, observations),
     }
 }
 
 pub fn migrate(deps: DepsMut, env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
-    // No state transformation needed in this migration; historical deposits are preserved as-is.
+    let legacy_params_item: cw_storage_plus::Item<LegacyRegistryParams> =
+        cw_storage_plus::Item::new("params");
+
+    if let Ok(legacy_params) = legacy_params_item.load(deps.storage) {
+        let config = CONFIG.load(deps.storage)?;
+        let new_params = RegistryParams {
+            min_endpoint_deposit: legacy_params.min_endpoint_deposit,
+            rent_per_epoch: legacy_params.rent_per_epoch,
+            epoch_seconds: legacy_params.epoch_seconds,
+            max_endpoints_per_chain: legacy_params.max_endpoints_per_chain,
+            trusted_oracles: vec![config.owner.to_string()],
+            oracle_max_batch_size: DEFAULT_ORACLE_MAX_BATCH_SIZE,
+            auto_unverify_failure_streak: DEFAULT_AUTO_UNVERIFY_FAILURE_STREAK,
+            auto_unverify_last_success_older_than_secs:
+                DEFAULT_AUTO_UNVERIFY_LAST_SUCCESS_OLDER_THAN_SECS,
+        };
+        PARAMS.save(deps.storage, &new_params)?;
+    }
+
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
     Ok(Response::new()
         .add_attribute("action", "migrate")
+        .add_attribute("migration_mode", "lazy_endpoint_compat")
+        .add_attribute("migrated_endpoints", "0")
         .add_attribute("preserve_historical_deposits", "true")
         .add_attribute("block_time", env.block.time.seconds().to_string()))
+}
+
+#[cfg(test)]
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, PartialEq)]
+struct LegacyEndpointRecord {
+    pub endpoint_id: u64,
+    pub chain_id: String,
+    pub owner: Addr,
+    pub kind: EndpointKind,
+    pub url: String,
+    pub normalized_url: String,
+    pub deposit: Uint128,
+    pub last_charged_at: u64,
+    pub active: bool,
+    pub verified: bool,
+    pub preferred: bool,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LegacyRegistryParams {
+    pub min_endpoint_deposit: Uint128,
+    pub rent_per_epoch: Uint128,
+    pub epoch_seconds: u64,
+    pub max_endpoints_per_chain: u32,
 }
 
 fn execute_register_chain(
@@ -237,7 +288,7 @@ fn execute_register_endpoint(
             deposit: endpoint.deposit,
             last_charged_at: env.block.time.seconds(),
             active: true,
-            verified: false,
+            verification: EndpointVerification::default(),
             preferred: false,
         },
     )?;
@@ -271,7 +322,8 @@ fn execute_top_up_endpoint(
     if info.sender != endpoint.owner && info.sender != config.owner {
         return Err(ContractError::Unauthorized);
     }
-    charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
+    let charged = charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
+    apply_treasury_delta(deps.storage, charged)?;
     endpoint.deposit = endpoint
         .deposit
         .checked_add(amount)
@@ -299,7 +351,8 @@ fn execute_remove_endpoint(
     if info.sender != endpoint.owner && info.sender != config.owner {
         return Err(ContractError::Unauthorized);
     }
-    charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
+    let charged = charge_endpoint(deps.storage, &mut endpoint, env.block.time.seconds())?;
+    apply_treasury_delta(deps.storage, charged)?;
     let refund_amount = endpoint.deposit;
     
     ENDPOINTS.remove(deps.storage, (chain_id.clone(), endpoint_id));
@@ -351,37 +404,176 @@ fn execute_set_params(
     if let Some(value) = params_update.max_endpoints_per_chain {
         params.max_endpoints_per_chain = value;
     }
-    validate_params(&params)?;
+    if let Some(value) = params_update.trusted_oracles {
+        params.trusted_oracles = value;
+    }
+    if let Some(value) = params_update.oracle_max_batch_size {
+        params.oracle_max_batch_size = value;
+    }
+    if let Some(value) = params_update.auto_unverify_failure_streak {
+        params.auto_unverify_failure_streak = value;
+    }
+    if let Some(value) = params_update.auto_unverify_last_success_older_than_secs {
+        params.auto_unverify_last_success_older_than_secs = value;
+    }
+
+    let params = validated_params(deps.api, params)?;
     PARAMS.save(deps.storage, &params)?;
 
     Ok(Response::new().add_attribute("action", "set_params"))
 }
 
-fn execute_set_endpoint_flags(
+fn execute_submit_endpoint_statuses(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
     chain_id: String,
-    endpoint_id: u64,
-    verified: Option<bool>,
-    preferred: Option<bool>,
+    observations: Vec<EndpointObservationInput>,
 ) -> Result<Response, ContractError> {
-    require_admin(deps.as_ref(), &info.sender)?;
+    validate_chain_id(&chain_id)?;
 
-    let mut endpoint = ENDPOINTS
-        .may_load(deps.storage, (chain_id.clone(), endpoint_id))?
-        .ok_or(ContractError::EndpointNotFound)?;
-    if let Some(value) = verified {
-        endpoint.verified = value;
+    let params = PARAMS.load(deps.storage)?;
+    if !params
+        .trusted_oracles
+        .iter()
+        .any(|oracle| oracle == info.sender.as_str())
+    {
+        return Err(ContractError::UnauthorizedOracle);
     }
-    if let Some(value) = preferred {
-        endpoint.preferred = value;
-    }
-    ENDPOINTS.save(deps.storage, (chain_id.clone(), endpoint_id), &endpoint)?;
 
-    Ok(Response::new()
-        .add_attribute("action", "set_endpoint_flags")
-        .add_attribute("chain_id", chain_id)
-        .add_attribute("endpoint_id", endpoint_id.to_string()))
+    if observations.is_empty() {
+        return Err(ContractError::EmptyOracleBatch);
+    }
+    if observations.len() as u32 > params.oracle_max_batch_size {
+        return Err(ContractError::OracleBatchTooLarge {
+            max: params.oracle_max_batch_size,
+        });
+    }
+
+    if CHAINS.may_load(deps.storage, chain_id.clone())?.is_none() {
+        return Err(ContractError::ChainNotFound { chain_id });
+    }
+
+    let now = env.block.time.seconds();
+    let mut seen_ids = HashSet::with_capacity(observations.len());
+    let mut endpoints_to_update: Vec<(EndpointRecord, EndpointObservationInput)> =
+        Vec::with_capacity(observations.len());
+    let mut total_charged = Uint128::zero();
+
+    for observation in observations {
+        if !seen_ids.insert(observation.endpoint_id) {
+            return Err(ContractError::DuplicateEndpointInBatch {
+                endpoint_id: observation.endpoint_id,
+            });
+        }
+
+        match (&observation.status, observation.latency_ms) {
+            (EndpointStatus::Online, None) => return Err(ContractError::MissingLatencyForOnline),
+            (EndpointStatus::Offline, Some(_)) => {
+                return Err(ContractError::InvalidLatencyForOffline)
+            }
+            _ => {}
+        }
+
+        let mut endpoint = ENDPOINTS
+            .may_load(deps.storage, (chain_id.clone(), observation.endpoint_id))?
+            .ok_or(ContractError::EndpointNotInChain {
+                endpoint_id: observation.endpoint_id,
+                chain_id: chain_id.clone(),
+            })?;
+
+        let charged = charge_endpoint(deps.storage, &mut endpoint, now)?;
+        total_charged = total_charged
+            .checked_add(charged)
+            .map_err(|_| ContractError::Overflow)?;
+        if !endpoint.active {
+            return Err(ContractError::EndpointNotFound);
+        }
+
+        endpoints_to_update.push((endpoint, observation));
+    }
+
+    apply_treasury_delta(deps.storage, total_charged)?;
+
+    let response = Response::new()
+        .add_attribute("action", "submit_endpoint_statuses")
+        .add_attribute("oracle", info.sender.to_string())
+        .add_attribute("chain_id", chain_id.clone())
+        .add_attribute("count", endpoints_to_update.len().to_string());
+
+    for (mut endpoint, observation) in endpoints_to_update {
+        endpoint.verification.last_status = Some(observation.status.clone());
+        endpoint.verification.last_checked_at = Some(now);
+        endpoint.verification.last_checked_by = Some(info.sender.clone());
+
+        match observation.status {
+            EndpointStatus::Online => {
+                endpoint.verification.last_latency_ms = observation.latency_ms;
+                endpoint.verification.last_success_at = Some(now);
+                endpoint.verification.consecutive_successes =
+                    endpoint.verification.consecutive_successes.saturating_add(1);
+                endpoint.verification.consecutive_failures = 0;
+                endpoint.verification.verification_state = VerificationState::VerifiedOnline;
+            }
+            EndpointStatus::Offline => {
+                endpoint.verification.last_latency_ms = None;
+                endpoint.verification.consecutive_failures =
+                    endpoint.verification.consecutive_failures.saturating_add(1);
+                endpoint.verification.consecutive_successes = 0;
+                endpoint.verification.verification_state = VerificationState::VerifiedOffline;
+            }
+        }
+
+        if endpoint.verification.consecutive_failures > params.auto_unverify_failure_streak {
+            if let Some(last_success_at) = endpoint.verification.last_success_at {
+                if now.saturating_sub(last_success_at)
+                    > params.auto_unverify_last_success_older_than_secs
+                {
+                    endpoint.verification.verification_state = VerificationState::Unverified;
+                }
+            }
+        }
+
+        ENDPOINTS.save(
+            deps.storage,
+            (endpoint.chain_id.clone(), endpoint.endpoint_id),
+            &endpoint,
+        )?;
+
+        // response = response
+        //     .add_attribute("endpoint_id", endpoint.endpoint_id.to_string())
+        //     .add_attribute(
+        //         "status",
+        //         endpoint
+        //             .verification
+        //             .last_status
+        //             .as_ref()
+        //             .map(EndpointStatus::as_str)
+        //             .unwrap_or("unknown"),
+        //     )
+        //     .add_attribute(
+        //         "verification_state",
+        //         endpoint.verification.verification_state.as_str(),
+        //     )
+        //     .add_attribute(
+        //         "latency_ms",
+        //         endpoint
+        //             .verification
+        //             .last_latency_ms
+        //             .map(|value| value.to_string())
+        //             .unwrap_or_else(|| "".to_string()),
+        //     )
+        //     .add_attribute(
+        //         "consecutive_successes",
+        //         endpoint.verification.consecutive_successes.to_string(),
+        //     )
+        //     .add_attribute(
+        //         "consecutive_failures",
+        //         endpoint.verification.consecutive_failures.to_string(),
+        //     );
+    }
+
+    Ok(response)
 }
 
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -392,14 +584,26 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         }
         QueryMsg::GetEndpoints {
             chain_id,
+            start_after,
+            limit,
             kind,
             include_inactive,
+            verification_state,
+            only_unverified,
+            last_success_before,
+            last_success_after,
         } => to_json_binary(&query_endpoints(
             deps,
             env,
             chain_id,
+            start_after,
+            limit,
             kind,
             include_inactive.unwrap_or(false),
+            verification_state,
+            only_unverified.unwrap_or(false),
+            last_success_before,
+            last_success_after,
         )?),
         QueryMsg::ExportChainJson { chain_id } => {
             to_json_binary(&query_export_chain_json(deps, env, chain_id)?)
@@ -422,7 +626,18 @@ fn query_chain(deps: Deps, env: Env, chain_id: String) -> StdResult<ChainRespons
     };
 
     let endpoints =
-        collect_endpoint_views(deps, env.block.time.seconds(), &chain_id, None, false)
+        collect_endpoint_views(
+            deps,
+            env.block.time.seconds(),
+            &chain_id,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
             .map_err(to_std_error)?;
 
     Ok(ChainResponse {
@@ -466,16 +681,39 @@ fn query_endpoints(
     deps: Deps,
     env: Env,
     chain_id: String,
+    start_after: Option<u64>,
+    limit: Option<u32>,
     kind: Option<EndpointKind>,
     include_inactive: bool,
+    verification_state: Option<VerificationState>,
+    only_unverified: bool,
+    last_success_before: Option<u64>,
+    last_success_after: Option<u64>,
 ) -> StdResult<EndpointsResponse> {
     validate_chain_id(&chain_id).map_err(to_std_error)?;
+
+    let effective_verification_filter = if only_unverified {
+        if let Some(state) = verification_state.clone() {
+            if state != VerificationState::Unverified {
+                return Err(to_std_error(ContractError::ConflictingEndpointFilters));
+            }
+        }
+        Some(VerificationState::Unverified)
+    } else {
+        verification_state
+    };
+
     let endpoints = collect_endpoint_views(
         deps,
         env.block.time.seconds(),
         &chain_id,
+        start_after,
+        limit,
         kind,
         include_inactive,
+        effective_verification_filter,
+        last_success_before,
+        last_success_after,
     )
     .map_err(to_std_error)?;
     Ok(EndpointsResponse { endpoints })
@@ -496,7 +734,18 @@ fn query_export_chain_json(
         })?;
 
     let endpoints =
-        collect_endpoint_views(deps, env.block.time.seconds(), &chain_id, None, false)
+        collect_endpoint_views(
+            deps,
+            env.block.time.seconds(),
+            &chain_id,
+            None,
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
             .map_err(to_std_error)?;
 
     let mut apis = ChainJsonApis {
@@ -507,6 +756,10 @@ fn query_export_chain_json(
     };
 
     for endpoint in endpoints {
+        if endpoint.verification_state != VerificationState::VerifiedOnline {
+            continue;
+        }
+
         let entry = ApiEndpointEntry {
             address: endpoint.url,
             provider: endpoint.owner,
@@ -548,15 +801,22 @@ fn collect_endpoint_views(
     deps: Deps,
     now: u64,
     chain_id: &str,
+    start_after: Option<u64>,
+    limit: Option<u32>,
     kind_filter: Option<EndpointKind>,
     include_inactive: bool,
+    verification_state_filter: Option<VerificationState>,
+    last_success_before: Option<u64>,
+    last_success_after: Option<u64>,
 ) -> Result<Vec<EndpointView>, ContractError> {
     let params = PARAMS.load(deps.storage)?;
+    let query_limit = limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT) as usize;
     let mut endpoints = vec![];
+    let start = start_after.map(Bound::exclusive);
 
     for item in ENDPOINTS
         .prefix(chain_id.to_string())
-        .range(deps.storage, None, None, cosmwasm_std::Order::Ascending)
+        .range(deps.storage, start, None, cosmwasm_std::Order::Ascending)
     {
         let (_id, endpoint) = item?;
 
@@ -572,6 +832,26 @@ fn collect_endpoint_views(
             continue;
         }
 
+        if let Some(filter) = verification_state_filter.clone() {
+            if endpoint.verification.verification_state != filter {
+                continue;
+            }
+        }
+
+        if let Some(before) = last_success_before {
+            match endpoint.verification.last_success_at {
+                Some(last_success_at) if last_success_at < before => {}
+                _ => continue,
+            }
+        }
+
+        if let Some(after) = last_success_after {
+            match endpoint.verification.last_success_at {
+                Some(last_success_at) if last_success_at > after => {}
+                _ => continue,
+            }
+        }
+
         endpoints.push(EndpointView {
             endpoint_id: endpoint.endpoint_id,
             chain_id: endpoint.chain_id,
@@ -579,12 +859,23 @@ fn collect_endpoint_views(
             kind: endpoint.kind,
             url: endpoint.url,
             normalized_url: endpoint.normalized_url,
-            verified: endpoint.verified,
+            verification_state: endpoint.verification.verification_state,
+            last_status: endpoint.verification.last_status,
+            last_latency_ms: endpoint.verification.last_latency_ms,
+            last_checked_at: endpoint.verification.last_checked_at,
+            last_checked_by: endpoint.verification.last_checked_by.map(|value| value.to_string()),
+            last_success_at: endpoint.verification.last_success_at,
+            consecutive_successes: endpoint.verification.consecutive_successes,
+            consecutive_failures: endpoint.verification.consecutive_failures,
             preferred: endpoint.preferred,
             active,
             remaining_deposit,
             estimated_expiry,
         });
+
+        if endpoints.len() >= query_limit {
+            break;
+        }
     }
 
     Ok(endpoints)
@@ -676,14 +967,39 @@ fn validate_text_field(field: &str, value: &str) -> Result<(), ContractError> {
     Ok(())
 }
 
-fn validate_params(params: &RegistryParams) -> Result<(), ContractError> {
+fn validate_params(api: &dyn Api, params: &RegistryParams) -> Result<(), ContractError> {
     if params.epoch_seconds == 0 || params.max_endpoints_per_chain == 0 {
         return Err(ContractError::InvalidParams);
     }
     if params.rent_per_epoch.is_zero() || params.min_endpoint_deposit.is_zero() {
         return Err(ContractError::InvalidParams);
     }
+    if params.oracle_max_batch_size == 0
+        || params.auto_unverify_failure_streak == 0
+        || params.auto_unverify_last_success_older_than_secs == 0
+    {
+        return Err(ContractError::InvalidParams);
+    }
+
+    let mut uniques = HashSet::with_capacity(params.trusted_oracles.len());
+    for oracle in &params.trusted_oracles {
+        let addr = api.addr_validate(oracle)?;
+        if !uniques.insert(addr.to_string()) {
+            return Err(ContractError::InvalidParams);
+        }
+    }
+
     Ok(())
+}
+
+fn validated_params(api: &dyn Api, mut params: RegistryParams) -> Result<RegistryParams, ContractError> {
+    let mut validated_oracles = Vec::with_capacity(params.trusted_oracles.len());
+    for oracle in &params.trusted_oracles {
+        validated_oracles.push(api.addr_validate(oracle)?.to_string());
+    }
+    params.trusted_oracles = validated_oracles;
+    validate_params(api, &params)?;
+    Ok(params)
 }
 
 fn require_admin(deps: Deps, sender: &Addr) -> Result<(), ContractError> {
@@ -756,8 +1072,9 @@ fn charge_endpoint(
     storage: &mut dyn Storage,
     endpoint: &mut EndpointRecord,
     now: u64,
-) -> Result<EndpointRecord, ContractError> {
+) -> Result<Uint128, ContractError> {
     let params = PARAMS.load(storage)?;
+    let mut charged = Uint128::zero();
 
     if endpoint.active {
         let elapsed = now.saturating_sub(endpoint.last_charged_at);
@@ -767,7 +1084,7 @@ fn charge_endpoint(
                 .rent_per_epoch
                 .checked_mul(Uint128::from(epochs as u128))
                 .map_err(|_| ContractError::Overflow)?;
-            let charged = due.min(endpoint.deposit);
+            charged = due.min(endpoint.deposit);
             endpoint.deposit = endpoint
                 .deposit
                 .checked_sub(charged)
@@ -778,17 +1095,24 @@ fn charge_endpoint(
             if endpoint.deposit.is_zero() {
                 endpoint.active = false;
             }
-
-            let mut treasury = TREASURY_ACCUMULATED.load(storage)?;
-            treasury = treasury
-                .checked_add(charged)
-                .map_err(|_| ContractError::Overflow)?;
-            TREASURY_ACCUMULATED.save(storage, &treasury)?;
         }
     }
 
-    ENDPOINTS.save(storage, (endpoint.chain_id.to_string(), endpoint.endpoint_id), &endpoint)?;
-    Ok(endpoint.clone())
+    Ok(charged)
+}
+
+fn apply_treasury_delta(storage: &mut dyn Storage, delta: Uint128) -> Result<(), ContractError> {
+    if delta.is_zero() {
+        return Ok(());
+    }
+
+    let mut treasury = TREASURY_ACCUMULATED.load(storage)?;
+    treasury = treasury
+        .checked_add(delta)
+        .map_err(|_| ContractError::Overflow)?;
+    TREASURY_ACCUMULATED.save(storage, &treasury)?;
+
+    Ok(())
 }
 
 fn simulate_endpoint_state(
@@ -845,4 +1169,67 @@ fn ensure_exact_native_deposit(info: &MessageInfo, expected: Uint128) -> Result<
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmwasm_std::testing::{mock_dependencies, mock_env};
+
+    #[test]
+    fn migrate_converts_legacy_endpoint_to_v1_verification() {
+        let mut deps = mock_dependencies();
+        let chain_id = "legacy-chain-1".to_string();
+        let endpoint_id = 7u64;
+
+        let legacy_endpoints: cw_storage_plus::Map<(String, u64), LegacyEndpointRecord> =
+            cw_storage_plus::Map::new("endpoints");
+
+        let owner = Addr::unchecked("cosmos1legacyowner");
+        legacy_endpoints
+            .save(
+                deps.as_mut().storage,
+                (chain_id.clone(), endpoint_id),
+                &LegacyEndpointRecord {
+                    endpoint_id,
+                    chain_id: chain_id.clone(),
+                    owner: owner.clone(),
+                    kind: EndpointKind::Rpc,
+                    url: "https://rpc.legacy.example".to_string(),
+                    normalized_url: "https://rpc.legacy.example".to_string(),
+                    deposit: Uint128::new(777),
+                    last_charged_at: 1_700_000_000,
+                    active: true,
+                    verified: true,
+                    preferred: true,
+                },
+            )
+            .unwrap();
+
+        let response = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        let migrated = ENDPOINTS
+            .load(deps.as_ref().storage, (chain_id, endpoint_id))
+            .unwrap();
+
+        assert_eq!(
+            response
+                .attributes
+                .iter()
+                .find(|attr| attr.key == "migration_mode")
+                .map(|attr| attr.value.clone()),
+            Some("lazy_endpoint_compat".to_string())
+        );
+        assert_eq!(migrated.owner, owner);
+        assert_eq!(migrated.deposit, Uint128::new(777));
+        assert_eq!(migrated.preferred, true);
+        assert_eq!(migrated.verification.verification_state, VerificationState::Unverified);
+        assert_eq!(migrated.verification.last_status, None);
+        assert_eq!(migrated.verification.last_latency_ms, None);
+        assert_eq!(migrated.verification.last_checked_at, None);
+        assert_eq!(migrated.verification.last_checked_by, None);
+        assert_eq!(migrated.verification.last_success_at, None);
+        assert_eq!(migrated.verification.consecutive_successes, 0);
+        assert_eq!(migrated.verification.consecutive_failures, 0);
+    }
 }

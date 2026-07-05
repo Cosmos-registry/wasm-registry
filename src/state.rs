@@ -2,7 +2,9 @@ use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Uint128};
 use cw_storage_plus::{Item, Map};
 
-use crate::msg::{ChainMeta, EndpointKind, RegistryParams};
+use crate::msg::{
+    ChainMeta, EndpointKind, EndpointStatus, RegistryParams, VerificationState,
+};
 
 #[cw_serde]
 pub struct Config {
@@ -29,8 +31,36 @@ pub struct EndpointRecord {
     pub deposit: Uint128,
     pub last_charged_at: u64,
     pub active: bool,
-    pub verified: bool,
+    #[serde(default)]
+    pub verification: EndpointVerification,
     pub preferred: bool,
+}
+
+#[cw_serde]
+pub struct EndpointVerification {
+    pub verification_state: VerificationState,
+    pub last_status: Option<EndpointStatus>,
+    pub last_latency_ms: Option<u32>,
+    pub last_checked_at: Option<u64>,
+    pub last_checked_by: Option<Addr>,
+    pub last_success_at: Option<u64>,
+    pub consecutive_successes: u32,
+    pub consecutive_failures: u32,
+}
+
+impl Default for EndpointVerification {
+    fn default() -> Self {
+        Self {
+            verification_state: VerificationState::Unverified,
+            last_status: None,
+            last_latency_ms: None,
+            last_checked_at: None,
+            last_checked_by: None,
+            last_success_at: None,
+            consecutive_successes: 0,
+            consecutive_failures: 0,
+        }
+    }
 }
 
 pub const CONFIG: Item<Config> = Item::new("config");

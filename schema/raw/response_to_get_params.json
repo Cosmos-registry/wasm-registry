@@ -15,12 +15,26 @@
     "RegistryParams": {
       "type": "object",
       "required": [
+        "auto_unverify_failure_streak",
+        "auto_unverify_last_success_older_than_secs",
         "epoch_seconds",
         "max_endpoints_per_chain",
         "min_endpoint_deposit",
-        "rent_per_epoch"
+        "oracle_max_batch_size",
+        "rent_per_epoch",
+        "trusted_oracles"
       ],
       "properties": {
+        "auto_unverify_failure_streak": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "auto_unverify_last_success_older_than_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
         "epoch_seconds": {
           "type": "integer",
           "format": "uint64",
@@ -34,8 +48,19 @@
         "min_endpoint_deposit": {
           "$ref": "#/definitions/Uint128"
         },
+        "oracle_max_batch_size": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "rent_per_epoch": {
           "$ref": "#/definitions/Uint128"
+        },
+        "trusted_oracles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false

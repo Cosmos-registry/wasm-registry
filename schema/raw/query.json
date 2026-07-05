@@ -82,6 +82,54 @@
                   "type": "null"
                 }
               ]
+            },
+            "last_success_after": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "last_success_before": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "limit": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "only_unverified": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "start_after": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0.0
+            },
+            "verification_state": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VerificationState"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "additionalProperties": false
@@ -145,6 +193,14 @@
         "rest",
         "grpc",
         "wss"
+      ]
+    },
+    "VerificationState": {
+      "type": "string",
+      "enum": [
+        "unverified",
+        "verified_online",
+        "verified_offline"
       ]
     }
   }

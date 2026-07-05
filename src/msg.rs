@@ -32,11 +32,9 @@ pub enum ExecuteMsg {
         endpoint_id: u64,
     },
     SetParams { params: ParamsUpdate },
-    SetEndpointFlags {
+    SubmitEndpointStatuses {
         chain_id: String,
-        endpoint_id: u64,
-        verified: Option<bool>,
-        preferred: Option<bool>,
+        observations: Vec<EndpointObservationInput>,
     },
 }
 
@@ -53,8 +51,14 @@ pub enum QueryMsg {
     #[returns(EndpointsResponse)]
     GetEndpoints {
         chain_id: String,
+        start_after: Option<u64>,
+        limit: Option<u32>,
         kind: Option<EndpointKind>,
         include_inactive: Option<bool>,
+        verification_state: Option<VerificationState>,
+        only_unverified: Option<bool>,
+        last_success_before: Option<u64>,
+        last_success_after: Option<u64>,
     },
     #[returns(ExportChainJsonResponse)]
     ExportChainJson { chain_id: String },
@@ -116,6 +120,45 @@ pub enum EndpointKind {
     Wss,
 }
 
+#[cw_serde]
+pub enum EndpointStatus {
+    Online,
+    Offline,
+}
+
+impl EndpointStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EndpointStatus::Online => "online",
+            EndpointStatus::Offline => "offline",
+        }
+    }
+}
+
+#[cw_serde]
+pub enum VerificationState {
+    Unverified,
+    VerifiedOnline,
+    VerifiedOffline,
+}
+
+impl VerificationState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VerificationState::Unverified => "unverified",
+            VerificationState::VerifiedOnline => "verified_online",
+            VerificationState::VerifiedOffline => "verified_offline",
+        }
+    }
+}
+
+#[cw_serde]
+pub struct EndpointObservationInput {
+    pub endpoint_id: u64,
+    pub status: EndpointStatus,
+    pub latency_ms: Option<u32>,
+}
+
 impl EndpointKind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -143,7 +186,14 @@ pub struct EndpointView {
     pub kind: EndpointKind,
     pub url: String,
     pub normalized_url: String,
-    pub verified: bool,
+    pub verification_state: VerificationState,
+    pub last_status: Option<EndpointStatus>,
+    pub last_latency_ms: Option<u32>,
+    pub last_checked_at: Option<u64>,
+    pub last_checked_by: Option<String>,
+    pub last_success_at: Option<u64>,
+    pub consecutive_successes: u32,
+    pub consecutive_failures: u32,
     pub preferred: bool,
     pub active: bool,
     pub remaining_deposit: Uint128,
@@ -187,6 +237,10 @@ pub struct RegistryParams {
     pub rent_per_epoch: Uint128,
     pub epoch_seconds: u64,
     pub max_endpoints_per_chain: u32,
+    pub trusted_oracles: Vec<String>,
+    pub oracle_max_batch_size: u32,
+    pub auto_unverify_failure_streak: u32,
+    pub auto_unverify_last_success_older_than_secs: u64,
 }
 
 #[cw_serde]
@@ -195,6 +249,10 @@ pub struct ParamsUpdate {
     pub rent_per_epoch: Option<Uint128>,
     pub epoch_seconds: Option<u64>,
     pub max_endpoints_per_chain: Option<u32>,
+    pub trusted_oracles: Option<Vec<String>>,
+    pub oracle_max_batch_size: Option<u32>,
+    pub auto_unverify_failure_streak: Option<u32>,
+    pub auto_unverify_last_success_older_than_secs: Option<u64>,
 }
 
 #[cw_serde]

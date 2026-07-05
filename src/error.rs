@@ -50,4 +50,28 @@ pub enum ContractError {
 
     #[error("overflow in arithmetic")]
     Overflow,
+
+    #[error("sender not in trusted oracle whitelist")]
+    UnauthorizedOracle,
+
+    #[error("oracle batch exceeds max size: {max}")]
+    OracleBatchTooLarge { max: u32 },
+
+    #[error("oracle batch must not be empty")]
+    EmptyOracleBatch,
+
+    #[error("duplicate endpoint in batch: {endpoint_id}")]
+    DuplicateEndpointInBatch { endpoint_id: u64 },
+
+    #[error("endpoint {endpoint_id} does not belong to chain {chain_id}")]
+    EndpointNotInChain { endpoint_id: u64, chain_id: String },
+
+    #[error("online observation must include latency_ms")]
+    MissingLatencyForOnline,
+
+    #[error("offline observation must not include latency_ms")]
+    InvalidLatencyForOffline,
+
+    #[error("query filters verification_state and only_unverified conflict")]
+    ConflictingEndpointFilters,
 }

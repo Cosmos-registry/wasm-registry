@@ -155,35 +155,24 @@
     {
       "type": "object",
       "required": [
-        "set_endpoint_flags"
+        "submit_endpoint_statuses"
       ],
       "properties": {
-        "set_endpoint_flags": {
+        "submit_endpoint_statuses": {
           "type": "object",
           "required": [
             "chain_id",
-            "endpoint_id"
+            "observations"
           ],
           "properties": {
             "chain_id": {
               "type": "string"
             },
-            "endpoint_id": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0.0
-            },
-            "preferred": {
-              "type": [
-                "boolean",
-                "null"
-              ]
-            },
-            "verified": {
-              "type": [
-                "boolean",
-                "null"
-              ]
+            "observations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/EndpointObservationInput"
+              }
             }
           },
           "additionalProperties": false
@@ -360,6 +349,39 @@
         "wss"
       ]
     },
+    "EndpointObservationInput": {
+      "type": "object",
+      "required": [
+        "endpoint_id",
+        "status"
+      ],
+      "properties": {
+        "endpoint_id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "latency_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "status": {
+          "$ref": "#/definitions/EndpointStatus"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EndpointStatus": {
+      "type": "string",
+      "enum": [
+        "online",
+        "offline"
+      ]
+    },
     "Explorer": {
       "type": "object",
       "required": [
@@ -387,6 +409,22 @@
     "ParamsUpdate": {
       "type": "object",
       "properties": {
+        "auto_unverify_failure_streak": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "auto_unverify_last_success_older_than_secs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
         "epoch_seconds": {
           "type": [
             "integer",
@@ -413,6 +451,14 @@
             }
           ]
         },
+        "oracle_max_batch_size": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
         "rent_per_epoch": {
           "anyOf": [
             {
@@ -422,6 +468,15 @@
               "type": "null"
             }
           ]
+        },
+        "trusted_oracles": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
